@@ -61,3 +61,6 @@ target/
 .idea/
 .vscode/
 node_modules/
+
+# Folder
+data/
