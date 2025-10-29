@@ -1,0 +1,51 @@
+service:
+  db:
+  image: postgres:16-alpine
+  container_name: metabase_demo_db
+  ports:
+  - "5432:5432"
+  environment:
+  POSTGRES_USER: appuser
+  POSTGRES_PASSWORD: apppass
+  POSTGRES_DB: appdb
+  volumes:
+  - pgdata:/var/lib/postgresql/data
+  - ./docker/initdb:/docker-entrypoint-initdb.d
+  healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+    - "3000:3000"
+    env_file:
+    - ./docker/metabase.env
+    depends_on:
+    db:
+    condition: service_healthy
+
+
+  # Facoltativo: build & run dell'app via Docker
+  app:
+    build: .
+    container_name: metabase_demo_app
+    ports:
+    - "8080:8080"
+    environment:
+    SPRING_PROFILES_ACTIVE: dev
+    SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/appdb
+    SPRING_DATASOURCE_USERNAME: appuser
+    SPRING_DATASOURCE_PASSWORD: apppass
+    JWT_SECRET: dev-secret-change-me
+    depends_on:
+    db:
+    condition: service_healthy
+
+
+    volumes:
+    pgdata:
