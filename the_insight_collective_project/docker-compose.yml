@@ -1,51 +1,55 @@
-service:
-  db:
-  image: postgres:16-alpine
-  container_name: metabase_demo_db
-  ports:
-  - "5432:5432"
-  environment:
-  POSTGRES_USER: appuser
-  POSTGRES_PASSWORD: apppass
-  POSTGRES_DB: appdb
-  volumes:
-  - pgdata:/var/lib/postgresql/data
-  - ./docker/initdb:/docker-entrypoint-initdb.d
-  healthcheck:
-  test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
-  interval: 5s
-  timeout: 5s
-  retries: 20
-
+services:
+  app:
+    # Build expects a Dockerfile at repo root (multi-stage Maven/JDK 21).
+    build: .
+    container_name: insight-app
+    ports:
+      - "8080:8080"
+    environment:
+      # Spring profile
+      - SPRING_PROFILES_ACTIVE=dev
+      # --- Aiven PostgreSQL (application DB: users/roles) ---
+      # Copy JDBC URL from Aiven console, keep sslmode=require
+      - SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+      - SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}
+      - SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}
+      # --- Metabase embedding (backend needs these to sign tokens) ---
+      - METABASE_SITE_URL=${METABASE_SITE_URL}
+      - METABASE_EMBEDDING_SECRET_KEY=${METABASE_EMBEDDING_SECRET_KEY}
+      # Allow iframe from Metabase origin
+      - APP_ORIGIN=${APP_ORIGIN}
+    depends_on:
+      metabase:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - insight-net
 
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
     ports:
-    - "3000:3000"
-    env_file:
-    - ./docker/metabase.env
-    depends_on:
-    db:
-    condition: service_healthy
-
-
-  # Facoltativo: build & run dell'app via Docker
-  app:
-    build: .
-    container_name: metabase_demo_app
-    ports:
-    - "8080:8080"
+      - "3000:3000"
     environment:
-    SPRING_PROFILES_ACTIVE: dev
-    SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/appdb
-    SPRING_DATASOURCE_USERNAME: appuser
-    SPRING_DATASOURCE_PASSWORD: apppass
-    JWT_SECRET: dev-secret-change-me
-    depends_on:
-    db:
-    condition: service_healthy
-
-
+      # Public URL of Metabase (used in embeds, redirects)
+      - MB_SITE_URL=${METABASE_SITE_URL}
+      # Allow embedding inside the app origin (iframe)
+      - MB_EMBEDDING_APP_ORIGIN=${APP_ORIGIN}
+      # --- BigQuery auth (service account) ---
+      # Metabase BigQuery driver uses Google ADC; point to the JSON key path
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-sa.json
     volumes:
-    pgdata:
+      # Mount the GCP service account JSON read-only
+      - ./docker/credentials/gcp-service-account.json:/run/secrets/gcp-sa.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q 'ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - insight-net
+
+networks:
+  insight-net:
+    name: insight-net
